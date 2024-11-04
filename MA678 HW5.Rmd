@@ -7,6 +7,16 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(rstanarm)
+library(AER)
+library(MASS)
+library(dplyr)
+library(tidyverse)
+library(haven)
+library(brms)
+library(plink)
+library(glmx)
+set.seed(123)
 ```
 
 ## 15.1 Poisson and negative binomial regression
@@ -14,25 +24,53 @@ The folder `RiskyBehavior` contains data from a randomized trial targeting coupl
 
 ### a) 
 Model this outcome as a function of treatment assignment using a Poisson regression. Does the model fit well? Is there evidence of overdispersion?  
+The variables in the model do have statistical significance, but the overdispersion is way larger than 1, so it is not a good model. 
+```{r}
+risky<-read.csv("~/Desktop/Statistical Practice/MA 678/678-HW/risky.csv")
+
+risky$fupacts_round<-round(risky$fupacts)
+model15.1a<-stan_glm(fupacts_round~women_alone, data = risky, family = poisson(link = "log"), refresh = 0)
+
+summary(model15.1a, digits = 3)
+```
 
 ```{r}
+pp_check(model15.1a)
 ```
+
+```{r}
+dispersiontest(model15.1a)
+```
+
 
 ### b) 
 Next extend the model to include pre-treatment measures of the outcome and the additional pre-treatment variables included in the dataset. Does the model fit well? Is there evidence of overdispersion?  
+THe model fits better than the last one with 4 significant predictors, however the overdispersion is again quite large. 
+```{r}
+model15.1b<-stan_glm(fupacts_round~ women_alone+ couples+bs_hiv+bupacts, data= risky, family = poisson (link = "log"), refresh = 0)
+summary(model15.1b, digits = 3)
+```
+```{r}
+pp_check(model15.1b)
+```
+
 
 ```{r}
+dispersiontest(model15.1b)
 ```
+
 
 ### c) 
 Fit a negative binomial (overdispersed Poisson) model. What do you conclude regarding effectiveness of the intervention?
-
+Since the three coefficients besides the before treatment are all negative it would suggest that the treatment worked.
 ```{r}
+model15.1c<-glm.nb(fupacts_round~ women_alone+ couples+bs_hiv+bupacts, data= risky, link = "log")
+summary(model15.1c)
 ```
 
 ### d) 
 These data include responses from both men and women from the participating couples. Does this give you any concern with regard to our modeling assumptions? 
-
+Yes, because we did not account for differences across gender, and with the women alone category it suggests a higher percentage of women in the study.
 ```{r}
 ```
 
@@ -43,19 +81,40 @@ Redo the basketball shooting example on page 270, making some changes:
 ### (a) 
 Instead of having each player shoot 20 times, let the number of shots per player vary, drawn from the uniform distribution between 10 and 30.  
 ```{r}
+N<-100
+height<-rnorm(N,72,3)
+p<- 0.4 +0.1*(height-72)/3
+n<-runif(N,10, 30) %>% round()
+y<-rbinom(N,n,p)
+data15.3a<- data.frame( n= n, y =y, height = height)
+model15.3a<-stan_glm(cbind(y,n-y)~height, family = binomial(link = 'logit'), data = data15.3a, refresh =0)
+
+summary(model15.3a)
 ```
 
 ### (b) 
 Instead of having the true probability of success be linear, have the true probability be a logistic function, set so that Pr(success) = 0.3 for a player who is 5'9" and 0.4 for a 6' tall player. 
 
 ```{r}
+N<-100
+height<-rnorm(N,72,3)
+n<-rep(20,N)
+y<-rbinom(N,n,p)
+data15.3b<-data.frame(n=n, y=y, height= height)
+model15.3b<-stan_glm(cbind(y,n-y)~height, family = binomial(link = "logit"), data =data15.3b, refresh =0)
+
+summary(model15.3b)
 ```
 
 
 ## 15.7 Tobit model for mixed discrete/continuous data
 Experimental data from the National Supported  Work example are in the folder `Lalonde`. Use the treatment indicator and pre-treatment variables to predict post-treatment (1978) earnings using a Tobit model. Interpret the model coefficients. 
 
+The intercept shows on average 422.8 after treatment for individuals with all other predictors as 0. The treatment shows a decrease of 5,977 on average for those in that group. Each additional year older is associated with a 59.55 increase on average. Each year of education is associated with an increase of 710.6 on average. The married group is on average 5,517 higher than the non married group. The log scale is related to the standard deviation. 
 ```{r}
+lalonde<-read_dta("~/Desktop/Statistical Practice/MA 678/678-HW/NSW_dw_obs.dta")
+model15.7<-tobit(re78~treat +age+educ+married, data = lalonde, left = 0)
+summary(model15.7)
 ```
 
 
@@ -63,23 +122,29 @@ Experimental data from the National Supported  Work example are in the folder `L
 The folder `Congress` has the votes for the Democratic and Republican candidates in each U.S. congressional district in 1988, along with the parties' vote proportions in 1986 and an indicator for whether the incumbent was running for reelection in 1988. For your analysis, just use the elections that were contested by both parties in both years.  
 
 ```{r}
+congress = read.csv("~/Desktop/Statistical Practice/MA 678/678-HW/congress.csv")
+congress15.8<-data.frame(v86 = congress$v86_adj, v88 = congress$v88_adj, inc= congress$inc88)
 ```
 
 ### (a) 
 Fit a linear regression using `stan_glm` with the usual normal-distribution model for the errors predicting 1988 Democratic vote share from the other variables and assess model fit.
 
 ```{r}
+model15.8a<-rstanarm::stan_glm(v88~v86+inc, data=congress15.8, refresh =0)
+summary(model15.8a, digits = 3)
 ```
 
 ### (b) 
 Fit the same sort of model using the `brms` package with a $t$ distribution, using the `brm` function with the student family. Again assess model fit.  
 
 ```{r}
+model15.8b<-brm(v88~v86+inc, data=congress15.8, refresh =0)
+summary(model15.8b, digits =3)
 ```
 
 ### (c) 
 Which model do you prefer? 
-
+The two models are very similar, but the smaple size is large enough where I think it would be better to us the nomral distribution.
 
 ## 15.9 Robust regression for binary data using the robit model
 Use the same data as the previous example with the goal instead of predicting for each district whether it was won by the Democratic or Republican candidate.  
@@ -88,17 +153,22 @@ Use the same data as the previous example with the goal instead of predicting fo
 Fit a standard logistic or probit regression and assess model fit.
 
 ```{r}
+model15.9a<-rstanarm::stan_glm(as.numeric(v88)~v86+inc, data=congress15.8, refresh =0, binomial(link = "probit"))
+summary(model15.9a, digits = 3)
+
 ```
 
 ### (b) 
 Fit a robit regression and assess model fit.
 
 ```{r}
+model15.9b<-glm(as.numeric(v88)~v86+inc, data=congress15.8, binomial(link = gosset(2)))
+summary(model15.9b, digits = 3)
 ```
 
 ### (c) 
 Which model do you prefer? 
-
+The robit model is a little bit better because the intercept and vote 86 are both significant while in the probit they are not. 
 
 ## 15.14 Model checking for count data
 The folder `RiskyBehavior` contains data from a study of behavior of couples at risk for HIV; see Exercise 15.1. 
@@ -107,18 +177,51 @@ The folder `RiskyBehavior` contains data from a study of behavior of couples at 
 Fit a Poisson regression predicting number of unprotected sex acts from baseline HIV status. Perform predictive simulation to generate 1000 datasets and record the percentage of observations that are equal to 0 and the percentage that are greater than 10 (the third quartile in the observed data) for each. Compare these to the observed value in the original data.
 
 ```{r}
+model15.14a<-rstanarm::stan_glm(fupacts_round~bs_hiv, data= risky, poisson(link ="log"), refresh =0)
+
+pred15.14a<-posterior_predict(model15.14a, 1000, newdata = risky)
+for (i in 1:1000){
+  eq0a<- sum(pred15.14a[i,]==0)
+  over10a <- sum(pred15.14a[i,]>10)
+}
+print(eq0a, digits = 4)
+```
+```{r}
+print(over10a/434, digits = 4)
 ```
 
 ### (b) 
 Repeat (a) using a negative binomial (overdispersed Poisson) regression.
 
 ```{r}
+model15.14b<-rstanarm::stan_glm(fupacts_round~bs_hiv, data= risky, neg_binomial_2(link ="log"), refresh =0)
+
+pred15.14b<-posterior_predict(model15.14b, 1000, newdata = risky)
+for (i in 1:1000){
+  eq0b<- sum(pred15.14b[i,]==0)
+  over10b <- sum(pred15.14b[i,]>10)
+}
+print(eq0b/434, digits = 4)
+```
+```{r}
+print(over10b/434, digits = 4)
 ```
 
 ### (c) 
 Repeat (b), also including ethnicity and baseline number of unprotected sex acts as inputs.
 
 ```{r}
+model15.14c<-rstanarm::stan_glm(fupacts_round~bs_hiv+bupacts, data= risky, neg_binomial_2(link ="log"), refresh =0)
+
+pred15.14c<-posterior_predict(model15.14c, 1000, newdata = risky)
+for (i in 1:1000){
+  eq0c<- sum(pred15.14c[i,]==0)
+  over10c <- sum(pred15.14c[i,]>10)
+}
+print(eq0c/434, digits = 4)
+```
+```{r}
+print(over10c/434, digits =4)
 ```
 
 
@@ -129,4 +232,11 @@ Exercise 15.7 used a Tobit model to fit a regression with an outcome that had mi
 Compare predictions that result from each of these models with each other. 
 
 ```{r}
+model15.15a<- glm(re78>0~treat +age+educ+married, data = lalonde, binomial)
+summary(model15.15a)
 ```
+```{r}
+model15.15b<-lm(log(re78)~treat+age+educ+married, data = lalonde[(lalonde$re78>0)==1,])
+summary(model15.15b)
+```
+

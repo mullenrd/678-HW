@@ -7,6 +7,10 @@ output: pdf_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+set.seed(123)
+library(rstanarm)
+library(ggplot2)
+library(arm)
 ```
 
 ## Disclaimer (remove after you've read)!
@@ -36,10 +40,31 @@ Compare two people who live the same distance from the nearest well but whose ar
 
 ### (a) 
 Use the divide-by-4 rule, based on the information from this regression output.  
-
+The person with an arsenic level of 1 is 5.75% more likely to switch than a person with a level of 0.5. The standard error of arsenic is 0.01, so the 95% CI is from 0.113 to 0.117 and the 50% CI is from 0.108 to 0.122.
 
 ### (b) 
 Use predictive simulation from the fitted model in R, under the assumption that these two  people each live 50 meters from the nearest safe well. 
+```{r}
+wells <- read.csv("~/Downloads/wells.csv", header = TRUE)
+
+model13.5b <- stan_glm(switch ~ dist100 + arsenic, binomial(link = "logit"), data = wells, refresh = 0)
+summary(model13.5b)
+
+newdata = data.frame(dist100 = c(0.5, 0.5), arsenic = c(0.5, 1))
+pred13.5 <- invlogit(posterior_linpred(model13.5b, newdata = newdata))
+
+estimate <- sprintf("%.4f", mean(pred13.5[, 2] - pred13.5[, 1]))
+mse13.5 <- sprintf("%.4f", sd(pred13.5[, 2] - pred13.5[, 1]))
+cat("The estimate is:", estimate)
+cat("The standard error is:", mse13.5)
+
+ci5013.5b <- sprintf("%.4f", quantile(pred13.5[, 2] - pred13.5[, 1], c(0.25, 0.75)))
+ci9513.5b <- sprintf("%.4f", quantile(pred13.5[, 2] - pred13.5[, 1], c(0.025, 0.975)))
+cat("The 50% CI is: (", paste(ci5013.5b, collapse = ", ") , ")")
+cat("The 95% CI is: (", paste(ci9513.5b, collapse = ", ") , ")")
+
+
+```
 
 
 ## 13.7 Graphing a fitted logistic regression
@@ -60,23 +85,58 @@ height         0.28   0.02
 
 ### (a) 
 Graph the logistic regression curve (the probability that someone is heavy) over the approximate range of the data. Be clear where the line goes through the 50% probability  point.  
+```{r}
+earnings <- read.csv("~/Downloads/earnings.csv", header = TRUE)
+earnings$heavy = ifelse(earnings$weight > 200, 1, 0)
+
+plot(c(50, 85), c(0, 1),
+     xlab = "Height",
+     ylab = "Prob over 200")
+points(earnings$height, jitter(earnings$heavy), pch = 20)
+curve(invlogit(-21.51 + 0.28 * x), add = TRUE)
+```
 
 ### (b) 
-Fill in the blank: near the 50% point, comparing two people who differ by one inch in height, you'll expect a difference of ____ in the probability of being heavy. 
+Fill in the blank: near the 50% point, comparing two people who differ by one inch in height, you'll expect a difference of 0.07 in the probability of being heavy. 
 
 
 ## 13.8 Linear transformations
 In the regression from the previous exercise, suppose you replaced  height in inches by height in centimeters. What would then be the intercept and slope? 
 
+The conversion from height in inches to cm is 2.54 cm per 1 inch so we would multiply the coefficient for height by 2.54. 
+
+The new equation would be log(weight over 200)= -21.51 + 0.7112*height.
  
 ## 13.10 Expressing a comparison of proportions as a logistic regression
 A randomized experiment is performed within a survey, and 1000 people are contacted. Half the people contacted are promised a $5 incentive to participate, and half are not promised an incentive. The result is a 50% response rate among the treated group and 40% response rate among the control group.  
 
 ### (a) 
 Set up these results as data in R. From these data, fit a logistic regression of response on the treatment indicator.  
+```{r}
+treat <- 500
+control <- 500
+
+response_treated <- rbinom(treat, 1, 0.50)
+response_control <- rbinom(control, 1, 0.40)
+
+data13.10a <- data.frame(
+  response = c(response_treated, response_control),
+  treatment = c(rep(1, treat), rep(0, control))
+)
+
+model13.10a <- stan_glm(response ~ treatment, family = binomial(link = "logit"), data = data13.10a, refresh = 0)
+
+summary(model13.10a)
+```
 
 ### (b) 
 Compare to the results from Exercise 4.1. 
+```{r}
+estimate13.10b <- 0.5 - 0.4
+mse13.10b <- sprintf("%.4f", sqrt(0.5 ^ 2 / 500 + 0.5 ^ 2 / 500))
+cat("The estimate of the average treatment effect is:", estimate13.10b)
+cat("The standard error of the average treatment effect is:", mse13.10b)
+```
 
 
 ## 13.11 Building a logistic regression model
@@ -85,15 +145,22 @@ The folder `Rodents` contains data on rodents in a sample of New York City apart
 ### (a) 
 Build a logistic regression model to predict the presence of rodents (the variable `rodent2` in the dataset) given indicators for the ethnic groups (`race`). Combine categories as appropriate.  Discuss the estimated coefficients in the model.  
 
+THe log odds for the first five races are all significant meaning they are 2 to 7 times more likely to have rodents than race 1. The last two groups are not statistically significant. 
 ```{r}
+rodents<-read.table("~/Downloads/rodents.dat", header = TRUE)
+model13.11 <- stan_glm(rodent2 ~ as.factor(race), family = binomial(link = "logit"), data = rodents, refresh = 0)
 
+summary(model13.11)
 ```
 
 ### (b) 
 Add to your model some other potentially relevant predictors describing the apartment, building, and community district. Build your model using the general principles explained in Section 12.6. Discuss the coefficients for the ethnicity indicators in your model. 
-
+The same patterns exist for the race variables in this model as the last one.
 ```{r}
-
+model13.11b <- rstanarm::stan_glm(rodent2 ~ as.factor(race) + as.factor(borough) + 
+                poverty + extflr5_2 + intcrack2 + inthole2,
+              family = "binomial"(link = "logit"), data = rodents, refresh= 0)
+summary(model13.11b)
 ```
 
 
@@ -104,35 +171,52 @@ The well-switching data described in Section 13.7 are in the folder `Arsenic`.
 Fit a logistic regression for the probability of switching using log (distance to nearest safe well) as a predictor.
 
 ```{r}
-
+model14.3a <- rstanarm::stan_glm(switch ~ log(dist), binomial(link = "logit"),
+                   wells, refresh = 0)
+summary(model14.3a)
 ```
 
 ### (b)
 Make a graph similar to Figure 13.8b displaying Pr(switch) as a function of distance to  nearest safe well, along with the data.
 
 ```{r}
-
+plot(c(0, max(wells$dist, na.rm = TRUE) * 1.02), c(0, 1),
+     xlab = "Distance",
+     ylab = "Probability of Switch")
+points(wells$dist, jitter(wells$switch), pch = 20)
+curve(invlogit(coef(model14.3a)[1] + coef(model14.3a)[2] * log(x)), add = TRUE)
 ```
 
 ### (c)
 Make a residual plot and binned residual plot as in Figure 14.8.
 
 ```{r}
-
+plot(c(0, 1), c(-1, 1),
+     xlab = "Estimated Probability of Switch",
+     ylab = "Results")
+abline(0, 0)
+points(fitted(model14.3a), wells$switch - fitted(model14.3a), pch = 20)
+binnedplot(fitted(model14.3a), resid(model14.3a))
 ```
 
 ### (d)
 Compute the error rate of the fitted model and compare to the error rate of the null model.
 
 ```{r}
-
+error14.3d <- mean((fitted(model14.3a) > 0.5 & wells$switch == 0) | 
+  (fitted(model14.3a) < 0.5 & wells$switch == 1))
+cat("The error rate of the fitted model is:", error14.3d)
 ```
 
 ### (e)
 Create indicator variables corresponding to `dist < 100`; `dist` between 100 and 200; and `dist > 200`. Fit a logistic regression for Pr(switch) using these indicators. With this new model, repeat the computations and graphs for part (a) of this exercise.
 
 ```{r}
+wells$distL <- ifelse(wells$dist < 100, "1", ifelse(wells$dist < 200, "2", "3"))
+model14.3e <- stan_glm(switch ~ distL, binomial(link = "logit"), 
+                   wells, refresh = 0)
 
+summary(model14.3e)
 ```
 
 
@@ -143,27 +227,39 @@ Continue with the well-switching data described in the previous exercise.
 Fit a logistic regression for the probability of switching using, as predictors, distance, log(arsenic), and their interaction. Interpret the estimated coefficients and their standard errors.
 
 ```{r}
-
+model14.7a <- rstanarm::stan_glm(switch ~ dist100 * log(arsenic), "binomial", data = wells, refresh =0)
+summary(model14.7a)
 ```
 
 ### (b)
 Make graphs as in Figure 14.3 to show the relation between probability of switching, distance, and arsenic level.
 
 ```{r}
+p_switch=function(dist, arsenic){ y=invlogit(coef(model14.7a)[1]+coef(model14.7a)[2]*dist/100+
+coef(model14.7a)[3]*log(arsenic)+ coef(model14.7a)[4]*(dist/100)*log(arsenic))
+return(y) }
 
+ggplot(wells)+
+geom_jitter(aes(x=dist, y=switch), height = 0.05, alpha=0.7, size=0.2)+ geom_function(aes(x=dist), fun=p_switch, args = list(arsenic = 0.5),color="blue")+ geom_text(aes(x=100, y=0.2, label="arsenic= 0.5"),color="blue")+ geom_function(aes(x=dist), fun=p_switch,args = list(arsenic = 1), color="red")+ geom_text(aes(x=100, y=0.65, label=" arsenic= 1.0"), color="red")+ scale_y_continuous(limits = c(-0.1, 1.1), breaks=c(0,1))+ 
+  labs(x="Distance to nearest well", y="Prob of switching")
 ```
 
 
 ### (c)
 Following the procedure described in Section 14.4, compute the average predictive differences corresponding to:  
 
-i. A comparison of `dist` = 0 to `dist` = 100, with `arsenic` held constant.  
-ii. A comparison of `dist` = 100 to `dist` = 200, with `arsenic` held constant.  
-iii. A comparison of `arsenic` = 0.5 to `arsenic` = 1.0, with `dist` held constant.  
-iv. A comparison of `arsenic` = 1.0 to `arsenic` = 2.0, with `dist` held constant.  
+i. A comparison of `dist` = 0 to `dist` = 100, with `arsenic` held constant.  -.212
+ii. A comparison of `dist` = 100 to `dist` = 200, with `arsenic` held constant.  -.209
+iii. A comparison of `arsenic` = 0.5 to `arsenic` = 1.0, with `dist` held constant.  .146
+iv. A comparison of `arsenic` = 1.0 to `arsenic` = 2.0, with `dist` held constant.  .140
 
-Discuss these results. 
 
 ```{r}
+difference_i=mean(p_switch(dist = 100, arsenic=wells$arsenic)-p_switch(dist = 0, arsenic=wells$arsenic))
 
+difference_ii=mean(p_switch(dist = 200,arsenic=wells$arsenic)- p_switch(dist = 100, arsenic=wells$arsenic))
+
+difference_iii=mean(p_switch(dist = wells$dist, arsenic=1)- p_switch(dist = wells$dist, arsenic=0.5))
+
+difference_iv=mean(p_switch(dist = wells$dist, arsenic=2)- p_switch(dist = wells$dist, arsenic=1))
 ```
