@@ -1,0 +1,367 @@
+---
+title: "MA678 Homework 7"
+author: "Reese Mullen"
+date: "November 14, 2020"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,out.width="0.9\\linewidth",dev="png",fig.align  = 'center')
+library(ggplot2)
+library(knitr)
+library(arm)
+library(data.table)
+library(foreign)
+library(gridExtra)
+library(car)
+library(stringr)
+library(rstan)
+library(rstanarm)
+library(zoo)
+```
+
+
+# Data analysis 
+
+## CD4 percentages for HIV infected kids
+
+The folder `cd4` has CD4 percentages for a set of young children with HIV who were measured several times over a period of two years. The dataset also includes the ages of the children at each measurement.
+
+```{r,echo=FALSE}
+# Read in the data from an excel-format ".csv" file
+hiv.data.raw <- fread ("http://www.stat.columbia.edu/~gelman/arm/examples/cd4/allvar.csv")
+
+invisible(hiv.data.raw[,ok := !is.na(CD4PCT) ])
+
+hiv.data<-hiv.data.raw[ok==TRUE]
+invisible(hiv.data[,y :=sqrt (CD4PCT)])
+ # kid's age (yrs) at the beginning of the study
+invisible(hiv.data[,age.baseline := baseage ]  ) 
+# kids age (yrs) at the time of measurement
+invisible(hiv.data[,age.measurement := visage ] ) 
+invisible(hiv.data[,time := visage - baseage ] )
+setnames(hiv.data,"treatmnt","treatment") 
+hiv.data<-hiv.data[complete.cases(hiv.data[,list(y,time,age.baseline,treatment)])]
+```
+
+1. Graph the outcome (the CD4 percentage, on the square root scale) for each child as a function of time.
+```{r}
+ggplot(hiv.data)+
+  geom_point(aes(x=time,y=y))+
+  labs(x ="Time", y = "CD4 % on Sqrt Scale")
+
+```
+
+2. Each child's data has a time course that can be summarized by a linear fit. Estimate these lines and plot them for all the children.
+
+```{r}
+cd4_2 <- lm(y~time+factor(newpid)-1, data = hiv.data)
+summary(cd4_2)
+
+ggplot(aes(x=time, y=y), data = hiv.data)+
+  geom_point()+
+  geom_abline(intercept = coef(cd4_2)[1], slope=coef(cd4_2)[2:length(coef(cd4_2))]) + 
+  labs(x ="Time", y = "CD4 % on Sqrt Scale")
+
+```
+
+
+3. Set up a model for the children's slopes and intercepts as a function of the treatment and age at baseline. Estimate this model using the two-step procedure–first estimate the intercept and slope separately for each child, then fit the between-child models using the point estimates from the first step.
+```{r}
+cd4_3 <- lm(y~time+factor(newpid)-1, data = hiv.data)
+summary(cd4_3)
+
+child <- hiv.data %>%
+  dplyr::select(newpid, age.baseline, treatment)
+child <- unique(child)
+cd4_3_coef <- data.frame(child, cd4_3$coefficients[2:length(cd4_3$coefficients)])
+colnames(cd4_3_coef) <- c("newpid", "age.baseline", "treatment","coef.id")
+rownames(cd4_3_coef) <- 1:250
+
+cd4_3.id <- lm(coef.id ~ age.baseline + factor(treatment),data = cd4_3_coef)
+summary(cd4_3.id)
+
+```
+
+
+4. Write a model predicting CD4 percentage as a function of time with varying intercepts across children. Fit using `lmer()` and interpret the coefficient for time.
+
+The coefficient for time is -0.366. It means if the time increases by 1 unit, then the CD4 percentage will decrease by 0.366 units on the square root scale.
+```{r}
+cd4_4 <- lmer (y ~ time + (1 | newpid), data = hiv.data)
+display(cd4_4)
+
+cd4_4_coef <- data.frame(unique(hiv.data$newpid),coef(cd4_4)$newpid)
+colnames(cd4_4_coef) <- c("newpid","intercept","time")
+```
+
+
+5. Extend the model in (4) to include child-level predictors (that is, group-level predictors) for treatment and age at baseline. Fit using `lmer()` and interpret the coefficients on time, treatment, and age at baseline.
+
+
+The coefficient for time is -0.362. It means if the time increases by 1 unit, then the CD4 percentage will decrease by 0.362 units on the square root scale.
+
+The coefficient for treatment is 0.18. This means that if the children are in treatment 2 their CD4 percentage will increase by 0.18 units on the square root scale.
+
+The coefficient for age baseline is -0.119, so if the age.baseline increases by 1 unit, then the CD4 percentage  will decrease by 0.119 units on the square root scale.
+
+```{r}
+cd4_5 <- lmer (y ~ time + factor(treatment) + age.baseline + 
+              (1 | newpid), data = hiv.data)
+display(cd4_5)
+
+```
+
+6. Investigate the change in partial pooling from (4) to (5) both graphically and numerically.
+
+```{r}
+data_plot <- as.data.frame(cbind(unlist(ranef(cd4_4)),unlist(ranef(cd4_5))))
+colnames(data_plot) <- c("cd4_4","cd4_5")
+
+ggplot(data=data_plot,aes(x=cd4_4,y=cd4_5))+
+  geom_point()+
+  geom_smooth()+
+  labs(x = "Random effcts of cd4_4", y ="Random effects of cd4_5")
+```
+```{r}
+display(cd4_4)
+display(cd4_5)
+```
+
+
+7. Use the model fit from (5) to generate simulation of predicted CD4 percentages for each child in the dataset at a hypothetical next time point.
+
+```{r}
+hiv_data_df <- as.data.frame(hiv.data)
+predict_data <- hiv_data_df %>%
+  dplyr::filter(!is.na(treatment)) %>%
+  dplyr::filter(!is.na(age.baseline)) %>%
+  dplyr::select(time, treatment, age.baseline, newpid, y)
+
+predict <- predict(cd4_5, newdata = predict_data)
+predict_cm <- cbind(predict_data, prediction = predict)
+colnames(predict_cm)[1] <- c("prediction")
+```
+
+8. Use the same model fit to generate simulations of CD4 percentages at each of the time periods for a new child who was 4 years old at baseline.
+
+```{r}
+predict_data_2 <- hiv_data_df %>% 
+  dplyr::filter(is.na(hiv.data$treatment)==FALSE) %>% 
+  dplyr::filter(is.na(hiv.data$age.baseline)==FALSE) %>% 
+  dplyr::select(time,treatment,age.baseline,newpid,y) %>% 
+  dplyr::filter(round(age.baseline)==4)
+
+predict_2 <- predict(cd4_5,newdata=predict_data_2)
+predict_cm_2 <- cbind(predict_data_2, predict_2)
+colnames(predict_cm_2)[1] <- c("prediction")
+```
+
+
+9. Posterior predictive checking: continuing the previous exercise, use the fitted model from (5) to simulate a new dataset of CD4 percentages (with the same sample size and ages of the original dataset) for the final time point of the study, and record the average CD4 percentage in this sample. Repeat this process 1000 times and compare the simulated distribution to the observed CD4 percentage at the final time point for the actual data.
+```{r}
+pred<-hiv.data[,list(time=max(time),age.baseline=unique(age.baseline),
+                       treatment=unique(treatment)),by =newpid]
+
+cm<-coef(cd4_5)$newpid
+sig.y<-sigma.hat(cd4_5)$sigma$data
+predy<-cm[,1]+cm[,2]*pred$time+cm[,3]*pred$age.baseline+cm[,4]*(pred$treatment-1)
+avg.pred.cd4<-NULL
+simul.pred<-matrix(NA,nrow(pred),1000)
+
+for (i in 1:1000){
+  y<-rnorm(predy,sig.y)
+  simul.pred[,1]<-y
+}
+hist(simul.pred)
+```
+
+10. Extend the modelto allow for varying slopes for the time predictor.
+```{r}
+cd4_10<-lmer(y~time+(1+time|newpid), data = hiv.data)
+```
+
+
+11. Next fit a model that does not allow for varying slopes but does allow for different coefficients for each time point (rather than fitting the linear trend).
+```{r}
+cd4_11<-lmer(y ~ factor(time) + (1 | newpid), data = hiv.data)
+```
+
+
+12. Compare the results of these models both numerically and graphically.
+```{r}
+plot4_12 <- as.data.frame(cbind(unlist(ranef(cd4_10))[1:250],unlist(ranef(cd4_11))[1:250]))
+colnames(plot4_12) <- c("cd4_10","cd4_11")
+
+ggplot(data=plot4_12,aes(x=cd4_10,y=cd4_11))+
+  geom_point()+
+  geom_smooth()+
+  labs(x = "Random effects of CD4_10 intercept", y = "Random effects of CD4_11 intercepts")
+
+```
+```{r}
+display(cd4_10)
+display(cd4_11)
+```
+
+
+## Figure skate in the 1932 Winter Olympics
+
+The folder `olympics` has seven judges' ratings of seven figure skaters (on two criteria: "technical merit" and "artistic impression") from the 1932 Winter Olympics. Take a look at 
+http://www.stat.columbia.edu/~gelman/arm/examples/olympics/olympics1932.txt
+```{r,echo=FALSE}
+filename<- "http://www.stat.columbia.edu/~gelman/arm/examples/olympics/olympics1932.txt"
+olympics1932_na<-read.fwf(filename,widths=c(2,14,9,9,9,9,9,9,9),skip=21,header = FALSE)
+colnames(olympics1932_na)<- c("pair", "criterion", "judge_1",  "judge_2",  "judge_3",
+                              "judge_4",  "judge_5" , "judge_6",  "judge_7")
+
+olympics1932<-na.locf(olympics1932_na)
+olympics1932$criterion<-str_trim(olympics1932_na$criterion)
+```
+
+1. Construct a $7\times 7 \times 2$ array of the data (ordered by skater, judge, and judging criterion).
+
+```{r}
+olymp_array <- melt(data = olympics1932, 
+                    id.vars = c("pair", "criterion"),
+                    measure.vars = colnames(olympics1932)[3:9])
+olymp_array <- olymp_array[order(olymp_array$pair, olymp_array$variable, olymp_array$criterion), ]
+
+olymp_array_1 <- array(olymp_array$value, dim = c(7, 7, 2))
+olymp_array_1
+
+```
+
+2. Reformulate the data as a $98\times 4$ array (similar to the top table in Figure 11.7), where the first two columns are the technical merit and artistic impression scores, the third column is a skater ID, and the fourth column is a judge ID.
+
+```{r}
+olymp_98 <- dplyr::rename(olymp_array, skater_ID = pair, judge_ID = variable)
+olymp_98 <- olymp_98[order(olymp_98$judge_ID),]
+olymp_98 <- olymp_98[c("criterion", "value", "skater_ID", "judge_ID")]
+```
+
+3. Add another column to this matrix representing an indicator variable that equals 1 if the skater and judge are from the same country, or 0 otherwise.
+
+```{r}
+olymp_98$SameCountry <-ifelse(olymp_98[,3] == " 1"&olymp_98[,4] == "judge_5",1,
+  ifelse(olymp_98[,3] == " 2"&olymp_98[,4] == "judge_7",1,
+  ifelse(olymp_98[,3] == " 3"&olymp_98[,4] == "judge_1",1,
+  ifelse(olymp_98[,3] == " 4"&olymp_98[,4] == "judge_1",1,
+  ifelse(olymp_98[,3] == " 7"&olymp_98[,4] == "judge_7",1,0)))))
+```
+
+4. Write the notation for a non-nested multilevel model (varying across skaters and judges) for the technical merit ratings and fit using lmer().
+```{r}
+ prog<- olymp_98 %>% 
+  dplyr::filter(criterion=="Program")
+perform <- olymp_98 %>% 
+  dplyr::filter(criterion=="Performance")
+
+olympmod4 <- lmer(value ~ 1 + (1|skater_ID) + (1|judge_ID),data=prog)
+summary(olympmod4)
+
+```
+
+5. Fit the model in (4) using the artistic impression ratings.
+```{r}
+olympmod5 <- lmer(value ~ 1 + (1|skater_ID) + (1|judge_ID),data=perform)
+summary(olympmod5)
+```
+
+6. Display your results for both outcomes graphically.
+
+```{r}
+ggplot(prog,aes(x=skater_ID,y=value,color=judge_ID))+geom_point()+
+  ggtitle("Program Scores")
+
+```
+```{r}
+ggplot(perform,aes(x=skater_ID,y=value,color=judge_ID))+geom_point()+
+  ggtitle("Performance Scores")
+```
+
+7. (Optional) Use posterior predictive checks to investigate model fit in (4) and (5).
+
+```{r}
+
+```
+
+
+## Models for adjusting individual ratings: 
+
+A committee of 10 persons is evaluating 100 job applications. Each person on the committee reads 30 applications (structured so that each application is read by three people) and gives each a numerical rating between 1 and 10.
+
+
+1. It would be natural to rate the applications based on their combined scores; however, there is a worry that different raters use different standards, and we would like to correct for this. Set up a model for the ratings (with parameters for the applicants and the raters).
+
+model<-lmer(ratings~applicant_ID+rater_ID+(1+rater_ID|rater_ID))
+
+2. It is possible that some persons on the committee show more variation than others in their ratings. Expand your model to allow for this.
+
+model_expanded <- lmer(ratings ~ applicant_ID + (1 | rater_ID) + (1 | applicant_ID) + (0 + rater_ID | rater_ID))
+
+
+##  Multilevel logistic regression 
+
+The folder `speed.dating` contains data from an experiment on a few hundred students that randomly assigned each participant to 10 short dates with participants of the opposite sex (Fisman et al., 2006). For each date, each person recorded several subjective numerical ratings of the other person (attractiveness, compatibility, and some other characteristics) and also wrote down whether he or she would like to meet the other person again. Label $y_{ij} = 1$ if person $i$ is interested in seeing person $j$ again $0$ otherwise
+and $r_{ij1},\dots, r_{ij6}$ as person $i$'s numerical ratings of person $j$ on the dimensions of attractiveness, compatibility, and so forth.
+Please look at 
+http://www.stat.columbia.edu/~gelman/arm/examples/speed.dating/Speed%20Dating%20Data%20Key.doc
+for details.
+
+```{r}
+dating<-fread("http://www.stat.columbia.edu/~gelman/arm/examples/speed.dating/Speed%20Dating%20Data.csv")
+
+```
+
+1. Fit a classical logistic regression predicting $Pr(y_{ij} = 1)$ given person $i$'s 6 ratings of person $j$. Discuss the importance of attractiveness, compatibility, and so forth in this predictive model.
+Attractiveness, fun, and sharing are all positive and statistically significant. Ambition is negative and significant. 
+```{r}
+dating_complete_pool <- glm(match~attr_o +sinc_o +intel_o +fun_o +amb_o +shar_o,data=dating,family=binomial)
+
+summary(dating_complete_pool)
+```
+
+2. Expand this model to allow varying intercepts for the persons making the evaluation; that is, some people are more likely than others to want to meet someone again. Discuss the fitted model.
+
+```{r}
+dating_pooled_1 <- glmer(match~gender + attr_o +sinc_o +intel_o +fun_o +amb_o +shar_o+(1|iid),data=dating,family=binomial, control = glmerControl(optimizer = "bobyqa", optCtrl = list(maxfun = 100000)))
+summary(dating_pooled_1)
+```
+
+3. Expand further to allow varying intercepts for the persons being rated. Discuss the fitted model.
+
+```{r}
+dating_pooled_2 <- stan_glmer(match ~ gender + attr_o+ sinc_o+ intel_o + 
+                              fun_o + amb + shar_o + 
+                              (1 | iid) + (1 | pid), 
+                              data = dating, family = binomial, refresh =0)
+summary(dating_pooled_2)
+```
+
+4. You will now fit some models that allow the coefficients for attractiveness, compatibility, and the other attributes to vary by person. Fit a no-pooling model: for each person i, fit a logistic regression to the data $y_{ij}$ for the 10 persons j whom he or she rated, using as predictors the 6 ratings $r_{ij1},\dots,r_{ij6}$ . (Hint: with 10 data points and 6 predictors, this model is difficult to fit. You will need to simplify it in some way to get reasonable fits.)
+```{r}
+uiid<-unique(dating$iid)
+dating_no_pool_list<-vector("list",length(uiid))
+for(i in 1:length(uiid)){
+#  attr_o +sinc_o +intel_o +fun_o +amb_o+shar_o,
+dating_no_pool_list[[i]] <- summary(glm(match~attr_o+shar_o,
+                       data=dating,
+                       subset = dating$iid==uiid[i],
+                       family=binomial))$coefficients
+}
+```
+
+5. Fit a multilevel model, allowing the intercept and the coefficients for the 6 ratings to vary by the rater i.
+
+```{r}
+dating_pooled_3 <- stan_glmer(match~gender + attr_o +sinc_o +intel_o +fun_o +amb_o +shar_o+(1+attr_o +sinc_o +intel_o +fun_o +amb_o +shar_o|iid)+(1|pid),data=as.data.frame(dating),family=binomial)
+```
+
+6. Compare the inferences from the multilevel model in (5) to the no-pooling model in (4) and the complete-pooling model from part (1) of the previous exercise.
+```{r}
+
+```
+
